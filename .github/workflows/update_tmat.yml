@@ -4,7 +4,7 @@ on:
   schedule:
     # Berjalan otomatis 2x sehari: pukul 07:30 WIB (00:30 UTC) dan 15:30 WIB (08:30 UTC)
     - cron: '30 0,8 * * *'
-  workflow_dispatch: # Tombol jalankan manual dari tab Actions
+  workflow_dispatch:
 
 jobs:
   sync-tmat-gee:
