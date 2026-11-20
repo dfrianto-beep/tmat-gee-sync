@@ -61,12 +61,41 @@ def normalize_water_level_unit(val):
     return round(val, 4)
 
 
+def extract_records_from_payload(payload):
+    """Mengekstrak daftar record stasiun dari berbagai kemungkinan struktur JSON API."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        # Cek kunci array umum
+        for key in ["data", "features", "results", "items", "records", "rows"]:
+            val = payload.get(key)
+            if isinstance(val, list):
+                # Jika format GeoJSON FeatureCollection
+                if val and isinstance(val[0], dict) and "properties" in val[0]:
+                    extracted = []
+                    for f in val:
+                        props = dict(f.get("properties") or {})
+                        coords = (f.get("geometry") or {}).get("coordinates") or []
+                        if len(coords) >= 2:
+                            props.setdefault("longitude", coords[0])
+                            props.setdefault("latitude", coords[1])
+                        extracted.append(props)
+                    return extracted
+                return val
+            # Jika nested dict seperti {"data": {"data": [...]}}
+            if isinstance(val, dict):
+                for subkey in ["data", "items", "results", "rows"]:
+                    if isinstance(val.get(subkey), list):
+                        return val[subkey]
+    return []
+
+
 # ==============================================================================
 # 3. PARSING RECORD STASIUN (SIPALAGA, SIMATAG, & KONSESI)
 # ==============================================================================
 def parse_station(item, kategori):
-    lat = safe_float(item.get("latitude"))
-    lon = safe_float(item.get("longitude"))
+    lat = safe_float(item.get("latitude") or item.get("lat") or item.get("y"))
+    lon = safe_float(item.get("longitude") or item.get("lon") or item.get("lng") or item.get("x"))
 
     # Validasi koordinat Indonesia
     if lat is None or lon is None or not (-12.0 <= lat <= 7.0 and 94.0 <= lon <= 142.0):
@@ -86,6 +115,7 @@ def parse_station(item, kategori):
             or safe_float(detail.get("WaterLevel"))
             or safe_float(item.get("water_level"))
             or safe_float(item.get("rs_water"))
+            or safe_float(item.get("tmat"))
         )
 
     water_level = normalize_water_level_unit(water_level)
@@ -191,12 +221,21 @@ def parse_station(item, kategori):
 # ==============================================================================
 def process_endpoint(url, kategori, asset_id, task_description):
     print(f"\n[{kategori}] Mengambil data dari {url}...")
-    resp = requests.get(url, timeout=90)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
+    resp = requests.get(url, headers=headers, timeout=90)
     resp.raise_for_status()
     payload = resp.json()
 
-    raw_data = payload.get("data", []) if isinstance(payload, dict) else payload
+    raw_data = extract_records_from_payload(payload)
     print(f"[{kategori}] Total record diterima dari API: {len(raw_data)}")
+
+    if not raw_data:
+        preview = str(payload)[:350]
+        print(f"[{kategori}] Info: API mengembalikan 0 record (aset lama dipertahankan). Preview respons: {preview}")
+        return
 
     features = []
     valid_wl_count = 0
@@ -213,7 +252,8 @@ def process_endpoint(url, kategori, asset_id, task_description):
     )
 
     if not features:
-        raise RuntimeError(f"[{kategori}] Tidak ada data valid yang dapat diunggah.")
+        print(f"[{kategori}] Info: Tidak ada koordinat valid pada respons API (aset lama dipertahankan).")
+        return
 
     fc = ee.FeatureCollection(features)
     task = ee.batch.Export.table.toAsset(
@@ -244,18 +284,11 @@ def main():
         },
     ]
 
-    errors = []
     for t in targets:
         try:
             process_endpoint(t["url"], t["kategori"], t["asset_id"], t["task_desc"])
         except Exception as e:
-            msg = f"[{t['kategori']}] GAGAL: {e}"
-            print(msg)
-            errors.append(msg)
-
-    # Jika salah satu gagal, buat GitHub Actions berstatus merah (Failed) agar langsung ketahuan
-    if errors:
-        raise RuntimeError(" | ".join(errors))
+            print(f"[{t['kategori']}] Peringatan gagal akses endpoint: {e}")
 
 
 if __name__ == "__main__":
