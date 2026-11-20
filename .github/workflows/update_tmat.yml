@@ -1,0 +1,30 @@
+name: Auto-Update TMAT Harian (Masyarakat & Konsesi)
+
+on:
+  schedule:
+    # Berjalan otomatis 2x sehari: pukul 07:30 WIB (00:30 UTC) dan 15:30 WIB (08:30 UTC)
+    - cron: '30 0,8 * * *'
+  workflow_dispatch: # Tombol jalankan manual dari tab Actions
+
+jobs:
+  sync-tmat-gee:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install earthengine-api requests
+
+      - name: Sync TMAT Masyarakat & Konsesi ke GEE
+        env:
+          EE_KEY_JSON: ${{ secrets.EE_KEY_JSON }}
+        run: |
+          python upload_tmat_harian.py
